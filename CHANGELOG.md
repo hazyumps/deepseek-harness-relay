@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- **A publish could ship a runtime older than its sources.** `prepare` skips the
+  build whenever `lib/` already exists, so publishing from a working tree whose
+  bundles predated a source change packed the stale `lib/index.js` beside the
+  new declarations. The 0.2.1 npm tarball went out that way: it has no
+  harness-session minting, so every request it proxies to a harness 0.1.2 or
+  later is answered 401. `prepack` now rebuilds both halves before packing, and
+  `pnpm test:pack` poisons the runtime, packs, and reads the bytes inside the
+  tarball to keep it that way.
+
 ## 0.2.1
 
 ### Fixed

@@ -57,6 +57,23 @@ sees a working relay with no configuration page rather than an error.
   entry's own namespace and drives the supervisor, so a port change rebinds
   without a restart.
 
+- **A cold start forwarded unauthenticated for the life of the process.** The
+  relay mounts before `dsh-client-connection` has written its cookie-signing
+  secret, read it **once**, and cached that single miss — after which every
+  proxied request was answered 401 while the relay's own pages kept working, so
+  a phone reported "the stream would not open" rather than a missing
+  credential. The read is now per request, through a resolver that never
+  memoizes a miss, which is what the credentials provider's own contract asks
+  for: "Resolution is per call: consumers re-resolve at each operation and must
+  not cache across operations." A rotated secret is picked up the same way, and
+  the recovery is logged once. Deployments that carried a post-start script to
+  force a reload for this reason can drop it.
+
+  Measured on a real cold boot: the old build logged the miss and stayed
+  unauthenticated with the secret already on disk; the new one logs
+  `harness browser session is available; proxied requests now authenticate`
+  with no restart and no config edit.
+
 ### Changed
 
 - `@deepseek-ai/schemastery` is `^3.18.4` (the release that has `.volatile()`),

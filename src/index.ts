@@ -228,13 +228,24 @@ async function start(
   // Harness 0.1.2 authenticates its whole `/api` surface, and the relay strips
   // the client's own cookie on the way upstream — so without a session of its
   // own every proxied request is answered 401. An older harness keeps no such
-  // secret, and needs none; that is the only case where this is absent.
-  const session = await HarnessSession.load(ctx)
-  if (session === undefined) {
+  // secret, and needs none.
+  //
+  // Resolved lazily, per request, rather than once here. On a cold start this
+  // plugin mounts before `dsh-client-connection` has written the secret, and a
+  // single read at bind time would freeze that one miss into every later
+  // request: the relay's own pages keep working, and every proxied call is
+  // answered 401 for the life of the process. That is a real failure this
+  // deployment used to paper over with a post-start script that edited the
+  // config purely to force a reload.
+  const resolver = HarnessSession.lazy(ctx)
+  // One probe at mount to report the situation, without making the answer
+  // permanent: the same resolver serves every request from here on.
+  await resolver.current()
+  if (!resolver.ready) {
     log.info(
-      'no harness browser-session secret found; forwarding unauthenticated. That is correct for a '
-      + 'harness before 0.1.2. On 0.1.2 or later every proxied request will be answered 401 — '
-      + 'start `dsh web` once so it creates the secret, then reload this plugin.',
+      'no harness browser-session secret yet; forwarding unauthenticated until it appears. That is '
+      + 'correct for a harness before 0.1.2. On 0.1.2 or later the harness writes that secret once it '
+      + 'has started, and the relay picks it up on the next request without a reload.',
     )
   }
 
@@ -245,11 +256,32 @@ async function start(
       host: '127.0.0.1',
       port: ctx.webServer.port,
       timeoutMs: config.proxyTimeoutMs,
-      session,
+      // Synchronous by contract, so the async read is refreshed here and the
+      // request path stays a plain lookup. Every forwarded request re-reads
+      // through this, which is what lets a cold start recover on its own.
+      session: () => resolver.sync(),
     },
     fingerprint: material?.record.fingerprint,
     log: message => { log.warn(message) },
   }
+
+  // Keep the synchronous view current for a harness whose secret arrives after
+  // mount, so a cold start heals without waiting for a settings edit. The read
+  // is cheap (a memoized map lookup once the value is known) and stops as soon
+  // as it has succeeded.
+  const poll = setInterval(() => {
+    if (resolver.ready) {
+      clearInterval(poll)
+      if (resolver.markRecovered()) {
+        log.info('harness browser session is available; proxied requests now authenticate')
+      }
+      return
+    }
+    void resolver.current()
+  }, 1_000)
+  // Do not hold the process open for this alone.
+  poll.unref?.()
+
 
   const authorities = relayAuthorities(config)
   const primary = await startListener({ runtime, bind: config.bind, port: config.port, tls: material, authorities })
@@ -327,6 +359,7 @@ async function start(
     // async disposers concurrently with no completion ordering, so anything
     // order-dependent belongs inside a single one.
     stop: async () => {
+      clearInterval(poll)
       untapShim()
       untap()
       unroute()

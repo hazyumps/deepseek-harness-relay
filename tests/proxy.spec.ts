@@ -17,7 +17,7 @@ import type { Duplex } from 'node:stream'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { Authenticator } from '../src/auth/index.ts'
 import { HarnessSession } from '../src/harness-session.ts'
-import { Config, type Config as RelayConfig } from '../src/config.ts'
+import { Config, plainConfig, type Config as RelayConfig } from '../src/config.ts'
 import { startListener, type RelayListener, type RelayRuntime } from '../src/server.ts'
 import { RelayStore } from '../src/state.ts'
 
@@ -124,7 +124,7 @@ function rawUpgrade(port: number, path: string, host: string): Promise<string> {
 }
 
 async function startRelay(overrides: Partial<RelayConfig> = {}): Promise<void> {
-  const config = Config({ stateDir: dir, port: 0, tls: 'off', mdns: false, ...overrides }) as RelayConfig
+  const config = plainConfig(Config({ stateDir: dir, port: 0, tls: 'off', mdns: false, ...overrides }) as Parameters<typeof plainConfig>[0])
   auth = new Authenticator(store, config)
   const runtime: RelayRuntime = {
     auth,

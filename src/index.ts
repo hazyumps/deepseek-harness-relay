@@ -26,27 +26,47 @@ import type { Context } from '@deepseek-ai/cordis'
 // release that still provides the services it injects.
 import type {} from '@deepseek-ai/dsh-host-webserver'
 import { Authenticator } from './auth/index.ts'
-import { assertCoherent, Config } from './config.ts'
+import { assertCoherent, Config, plainConfig, type ConfigSchema } from './config.ts'
 import { injectRelayLink } from './badge.ts'
 import { assertTrustedAuthority, localAddresses, relayAuthorities } from './fence.ts'
 import { HarnessSession } from './harness-session.ts'
 import { advertise } from './mdns.ts'
 import { relayStateDir } from './paths.ts'
-import { installSettingsSection } from './settings-section.ts'
+import { followSettings } from './settings-section.ts'
 import { RELAY_PREFIX } from './routes.ts'
 import { injectSecureContextShim } from './secure-context.ts'
 import { startListener, type RelayRuntime } from './server.ts'
 import { RelayStore } from './state.ts'
 import { certificateSans, loadCertificate } from './tls.ts'
 
-export { Config } from './config.ts'
-export type { CompatConfig, PrivilegedPolicy, TlsMode } from './config.ts'
+export { Config, plainConfig } from './config.ts'
+export type { CompatConfig, ConfigSchema, PrivilegedPolicy, TlsMode } from './config.ts'
 
 /** Stable Cordis plugin name. */
 export const name = 'relay'
 
 /** The harness web server this relay fronts. */
 export const inject = ['webServer']
+
+/**
+ * The plugin object the Cordis loader registers, and the only reason this
+ * module has a default export.
+ *
+ * The loader normalizes a module's exports down to a single plugin object —
+ * `unwrapExports` is `exports.default ?? exports` — and then caches the
+ * configuration schema off **that** object, as `{ name, callback, fibers,
+ * Config: plugin.Config }`. The harness's settings plane reads it back with
+ * `entry.fiber.runtime.Config` to decide whether an entry is an editable
+ * namespace at all.
+ *
+ * A module that exports a bare `apply` **function** therefore has no `.Config`
+ * for anyone to find, and its entry is invisible to the Plugins page no matter
+ * how correct the rest is: the Host serves no namespace, and the browser card
+ * has nothing to attach to. Verified against dsh 0.1.7-rc.2, where this plugin
+ * with only the named exports contributes **zero** namespaces to
+ * `settings/describe`.
+ */
+export default { name, inject, apply, Config }
 
 /** The relay's own logging, degraded to the console when no logger is mounted. */
 function loggerFor(ctx: Context): { info: (message: string) => void, warn: (message: string) => void } {
@@ -65,9 +85,10 @@ function loggerFor(ctx: Context): { info: (message: string) => void, warn: (mess
  * @param ctx - plugin context; `ctx.webServer` is the harness listener to front.
  * @param config - resolved configuration.
  */
-export function apply(ctx: Context, config: Config): void {
-  assertCoherent(config)
-  for (const entry of [...config.trustedHosts, ...config.publicHostnames]) assertTrustedAuthority(entry)
+export function apply(ctx: Context, config: ConfigSchema): void {
+  const initial = plainConfig(config)
+  assertCoherent(initial)
+  for (const entry of [...initial.trustedHosts, ...initial.publicHostnames]) assertTrustedAuthority(entry)
 
   // The relay is a fence in front of a loopback server. If the harness is
   // already answering the network itself, the relay is decoration in front of
@@ -86,12 +107,13 @@ export function apply(ctx: Context, config: Config): void {
 
   ctx.effect(() => {
     const supervisor = new Supervisor(ctx, log)
-    let source = (): Config => config
-    installSettingsSection(ctx, Config, config, {
-      setSource: (current) => { source = current },
-      onChange: () => { supervisor.apply(source()) },
-    })
-    supervisor.apply(source())
+    // The schema resolves each `.volatile()` field to a live handle, so the
+    // running configuration is read through them on every use rather than
+    // captured once. A settings write swaps the values under these handles and
+    // the event below is what turns that into a rebind.
+    const read = (): Config => plainConfig(config)
+    followSettings(ctx, { onChange: () => { supervisor.apply(read()) } })
+    supervisor.apply(read())
     return async () => { await supervisor.stop() }
   }, 'dsh-relay: listeners')
 }

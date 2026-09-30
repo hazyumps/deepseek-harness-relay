@@ -89,6 +89,26 @@ sees a working relay with no configuration page rather than an error.
   were checked by mutation: removing the default export, or dropping
   `.volatile()` from a single field, fails the suite.
 
+### Declared compatibility: 0.1.7 and 0.2.0
+
+The harness peer ranges are now `^0.1.7-rc.2 || >=0.2.0-rc.1 <0.2.1-0` rather
+than an open `>=0.1.7-rc.2`, so the two generations this build was actually
+verified against are the two it claims:
+
+- **0.1.7-rc.2** — the target of this release; the card, the live settings
+  follow, and the cold-start recovery were measured here.
+- **0.2.0-rc.1 through 0.2.0** — audited by comparing both installs file by
+  file, then driven end to end: the Host fence, password sign-in, session and
+  device credentials, pairing, revocation, HTTP proxying with the harness
+  session attached, and the WebSocket upgrade both with and without a
+  credential. 15 functional checks pass, and a non-loopback client is refused
+  without one.
+
+`<0.2.1-0` is deliberate rather than a caret: it excludes the next minor so an
+untested 0.3 does not install silently, while `0.2.0-rc.1`-and-later are
+covered because the two 0.2.0 release candidates were compared and share every
+file this plugin touches.
+
 ## 0.2.1
 
 ### Fixed
